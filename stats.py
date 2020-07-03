@@ -7,10 +7,10 @@ import sys
 import getpass
 import os
 import time
-
+import csv
 
 NUMPROCS=9
-DIR="/cw/w3users2/tias/public_html/pinacs"
+DIR="/home/seba/public_html/public_html/pinacs"
 EXT="dat"
 
 ########
@@ -86,15 +86,48 @@ totcpu = totcpu/ncpus
 p = Popen("hostname", shell=True, stdout=PIPE, close_fds=True)
 hostname = p.stdout.readline().strip().lower()
 #hostname = commands.getoutput("hostname")
+
+
+query_attributes = ['index','name','utilization.gpu','utilization.memory','memory.total','memory.free','memory.used']
+gpu_info = dict()
+gpus = list()
+for att in query_attributes:
+    gpu_info[att]=dict()
+gpu = False
+###GPU
+try:
+    p2 = Popen(['nvidia-smi', '--query-gpu='+','.join(query_attributes), '--format=csv'], stdout=PIPE, close_fds=True)
+    gpu_csv = csv.reader(p2.stdout, skipinitialspace=True)
+    headers = gpu_csv.next()
+    for row in gpu_csv:
+        index = row[0]
+        name = hostname+'_'+index
+        gpus.append(name)
+        for i,att in enumerate(query_attributes):
+            gpu_info[att][name] = row[i]
+    gpu = True
+    
+except Exception as e:
+    pass
+###
+
+#query_attributes = [s.replace('.','') for s in query_attributes]
+
 output = "<tr><td colspan=\"6\"><b>%s</b> (CPU:%s%% - MEM:%s%%)</td></tr>"%(hostname, totcpu,totmem)+output
 
 f = open("%s/%s.%s"%(DIR,hostname,EXT), "w")
 f.write("<?php\n")
 f.write("$cpu['%s'] = %.1f;\n"%(hostname,totcpu))
+if gpu:
+    f.write("$gpu['{}'] = array('{}');\n".format(hostname,"', '".join(gpus)))
 f.write("$mem['%s'] = %.1f;\n"%(hostname,totmem))
 f.write("$load['%s'] = array('%s');\n"%(hostname,"', '".join(load)))
 f.write("$users['%s'] = array('%s');\n"%(hostname,"', '".join(users)))
 f.write("$time['%s'] = %s;\n"%(hostname, time.time()))
 f.write("$output['%s'] = '%s';\n"%(hostname,output.encode('string_escape')))
+if gpu:
+    for att in query_attributes:
+        for g in gpus:
+            f.write("${}['{}'] = '{}';\n".format(att.replace('.',''),g,gpu_info[att][g]))
 f.write("?>")
 f.close()
