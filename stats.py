@@ -9,8 +9,8 @@ import os
 import time
 import csv
 
-NUMPROCS=9
-DIR="/home/seba/public_html/public_html/pinacs"
+NUMPROCS=100
+DIR="/home/guyvdb/www/top"
 EXT="dat"
 
 ########
@@ -43,8 +43,8 @@ for proc in procs:
 
   this_user = getpass.getuser()
   this_script = os.path.abspath(__file__)
-  # ignore 0% cpu comands and cron, plymouth as well as this script
-  if (d[2] != '%CPU' and float(d[2]) == 0) or \
+  # ignore (<3% cpu and <3%ram) comands and cron, plymouth as well as this script
+  if (d[2] != '%CPU' and (float(d[2]) <= 3 and float(d[3]) <= 3)) or \
      (d[0] == 'root' and d[5] == '/USR/SBIN/CRON') or \
      (d[0] == 'root' and d[5] == 'CRON') or \
      d[5] == '/sbin/plymouthd' or \
@@ -84,7 +84,7 @@ ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
 totcpu = totcpu/ncpus
 
 p = Popen("hostname", shell=True, stdout=PIPE, close_fds=True)
-hostname = p.stdout.readline().strip().lower()
+hostname = p.stdout.readline().strip().lower().replace('.cs.ucla.edu','')
 #hostname = commands.getoutput("hostname")
 
 
@@ -113,7 +113,7 @@ except Exception as e:
 
 #query_attributes = [s.replace('.','') for s in query_attributes]
 
-output = "<tr><td colspan=\"6\"><b>%s</b> (CPU:%s%% - MEM:%s%%)</td></tr>"%(hostname, totcpu,totmem)+output
+output = "<tr><td colspan=\"6\"><b>%s</b> (CPU:%.1f%% - MEM:%.1f%%)</td></tr>"%(hostname, totcpu,totmem)+output
 
 f = open("%s/%s.%s"%(DIR,hostname,EXT), "w")
 f.write("<?php\n")
