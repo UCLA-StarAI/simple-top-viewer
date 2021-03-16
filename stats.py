@@ -44,7 +44,7 @@ for proc in procs:
   this_user = getpass.getuser()
   this_script = os.path.abspath(__file__)
   # ignore (<3% cpu and <3%ram) comands and cron, plymouth as well as this script
-  if (d[2] != '%CPU' and (float(d[2]) <= 3 and float(d[3]) <= 3)) or \
+  if (d[2] != '%CPU' and (float(d[2]) <= 2 and float(d[3]) <= 2)) or \
      (d[0] == 'root' and d[5] == '/USR/SBIN/CRON') or \
      (d[0] == 'root' and d[5] == 'CRON') or \
      d[5] == '/sbin/plymouthd' or \

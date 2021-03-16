@@ -109,6 +109,9 @@ for ($i = count($families); $i >= 0; $i--) {
             $top_users[$usr] = $count;
         }
         $uss = substr($uss,0,-2);
+        if ($uss == '1 x ') { // there are no users...
+            $uss = "<i>...crickets...</i>";
+        }
         if ($time_local - round(@$time[$key]) > 590) {
           array_push($not_responding, $key);
         } else {
@@ -159,8 +162,8 @@ foreach($gpu_machines as $key) {
         $totmem = $memorytotal[$gpu_key];
         $freemem = $memoryfree[$gpu_key];
         $usedmem = $memoryused[$gpu_key];
-        printf('<tr> <td>%s</td> <td>%s</td> <td %s>%s</td> <td %s>%s</td> <td>%s</td>  <td>%s</td> <td>%s</td> <td>%s</td> </tr>',
-                $key,$ind,color_bg($gpuload),$gpuload,color_bg($gpumem),$gpumem,$nam,$totmem,$freemem,$usedmem);
+        printf('<tr> <td><a  href="#%s">%s</a></td> <td>%s</td> <td %s>%s</td> <td %s>%s</td> <td>%s</td>  <td>%s</td> <td>%s</td> <td>%s</td> </tr>',
+                $key,$key,$ind,color_bg($gpuload),$gpuload,color_bg($gpumem),$gpumem,$nam,$totmem,$freemem,$usedmem);
         }
 
 }
