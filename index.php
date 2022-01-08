@@ -54,7 +54,7 @@ if (is_dir($DIR)) {
 
 // families of machines
 $families = array( 
-                   1 => array('orval','duvel','leffe')
+                   1 => array('orval','duvel','leffe','karmeliet')
                  );
 
 $families_notes = array( 0 => 'Other machines reporting', // machines not in a family
@@ -72,7 +72,6 @@ $not_responding = array();
 $top_users = array();
 $all = array_keys($cpu);
 $gpu_machines = array_keys($gpu);
-//print($gpu_machines)
 
 print('<div class="btn btn-large btn-block disabled" type="button"><b>Basic rules:</b> be nice</div>');
 
@@ -87,6 +86,7 @@ for ($i = count($families); $i >= 0; $i--) {
     $todo = array_intersect($all, $families[$i]);
     $all = array_diff($all, $todo);
   }
+  asort($todo);
 
   if (!empty($todo)) {
       // filler above families
@@ -150,8 +150,9 @@ printf('<div><h4>%s</h4>', $families_notes[5]);
 
 // start table
 print('<table class="table table-bordered table-condensed">');
-print('<tr><th>Machine</th><th>Index</th><th>GPU</th><th>MEM</th><th>Name</th><th>Total memory</th><th>Free memory</th><th>Used memory</th></tr>');
+print('<tr><th>Machine</th><th>Index</th><th>GPU</th><th>MEM</th><th>Name</th><th>Free memory</th><th>Used memory</th></tr>');
 
+asort($gpu_machines);
 foreach($gpu_machines as $key) {
     $gpus = $gpu[$key];
     foreach($gpus as $gpu_key) {
@@ -159,11 +160,10 @@ foreach($gpu_machines as $key) {
         $nam = $name[$gpu_key];
         $gpuload = $utilizationgpu[$gpu_key];
         $gpumem = $utilizationmemory[$gpu_key];
-        $totmem = $memorytotal[$gpu_key];
         $freemem = $memoryfree[$gpu_key];
         $usedmem = $memoryused[$gpu_key];
-        printf('<tr> <td><a  href="#%s">%s</a></td> <td>%s</td> <td %s>%s</td> <td %s>%s</td> <td>%s</td>  <td>%s</td> <td>%s</td> <td>%s</td> </tr>',
-                $key,$key,$ind,color_bg($gpuload),$gpuload,color_bg($gpumem),$gpumem,$nam,$totmem,$freemem,$usedmem);
+        printf('<tr> <td><a  href="#%s">%s</a></td> <td>%s</td> <td %s>%s</td> <td %s>%s</td> <td>%s</td> <td>%s</td> <td>%s</td> </tr>',
+                $key,$key,$ind,color_bg($gpuload),$gpuload,color_bg($gpumem),$gpumem,$nam,$freemem,$usedmem);
         }
 
 }
@@ -205,9 +205,10 @@ if (count($top_users) != 0) {
 
 // show some basic specs
 print('<div class="left"><h3>Specifications</h3><ol class="unstyled">');
-print('<li><i>orval</i>: 72 threads, 504 Gb memory, 2 GPUs</li>');
-print('<li><i>leffe</i>: 32 threads, 126 Gb memory, 2 GPUs</li>');
 print('<li><i>duvel</i>: 40 threads, 504 Gb memory</li>');
+print('<li><i>karmeliet</i>: 32 threads, 126 Gb memory, 4 GPUs</li>');
+print('<li><i>leffe</i>: 32 threads, 126 Gb memory, 2 GPUs</li>');
+print('<li><i>orval</i>: 72 threads, 504 Gb memory, 2 GPUs</li>');
 print('</ol></div>');
 
 ?>
