@@ -10,6 +10,7 @@ import getpass
 import html
 import os
 import pwd
+import sys
 import time
 import csv
 
@@ -21,6 +22,14 @@ HIST_SAMPLES = 288  # keep ~24h of history at one sample per 5 minutes
 # filesystems worth watching; non-existent ones are skipped, so this is safe
 # to ship generically (a lab's /scratch, a laptop's plain /, etc.)
 DISK_CANDIDATES = ['/', '/tmp', '/scratch', '/scratch2', '/space', '/data', '/local', '/var']
+
+# The expensive per-user disk scan (diskusage.py) is triggered from this script,
+# which already runs every 5 min on every machine -- so no extra crontab entry is
+# needed. It only fires in the quiet DU_HOUR window, only if the cached result is
+# stale, and only when the machine is idle-ish, so it never disturbs experiments.
+DU_HOUR = 5              # local hour (0-23) to run the nightly scan
+DU_MIN_AGE = 20 * 3600   # only rescan if the cached .du is older than this
+DU_MAX_LOAD = 0.5        # skip unless 1-min load is below this many per core
 
 this_user = getpass.getuser()
 this_script = os.path.abspath(__file__)
@@ -257,3 +266,26 @@ htmp = "%s.tmp.%d" % (histfile, os.getpid())
 with open(htmp, "w") as hf:
     hf.write("\n".join(samples) + "\n")
 os.replace(htmp, histfile)
+
+# ---- once a day, launch the expensive per-user disk scan ----
+# Gated on: the quiet hour, a stale cache, and low load. diskusage.py detaches
+# and locks itself, so these 5-minute checks never block collection or stack up.
+try:
+    du_script = os.path.join(DIR, "diskusage.py")
+    du_file = "%s/%s.du" % (DIR, hostname)
+    try:
+        du_stale = (now - os.path.getmtime(du_file)) > DU_MIN_AGE
+    except OSError:
+        du_stale = True  # missing cache -> definitely due for a scan
+    try:
+        load1 = float(load[0])
+    except (ValueError, IndexError):
+        load1 = float('inf')
+    low_load = ncpus and load1 <= DU_MAX_LOAD * ncpus
+    if (os.path.exists(du_script) and time.localtime(now).tm_hour == DU_HOUR
+            and du_stale and low_load):
+        Popen([sys.executable or "python3", du_script],
+              stdout=DEVNULL, stderr=DEVNULL, stdin=DEVNULL,
+              close_fds=True, start_new_session=True)
+except Exception:
+    pass

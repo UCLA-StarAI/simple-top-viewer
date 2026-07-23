@@ -96,6 +96,12 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
   .dim{opacity:.28} .hit{background:color-mix(in srgb,var(--accent) 12%,transparent)}
   .warnrow{color:var(--warn)} .critrow{color:var(--crit);font-weight:650}
   .foot{color:var(--muted);font-size:12px;margin:24px 0 8px;text-align:center}
+  .bar.mini{height:8px;min-width:50px}
+  .mrow{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11px}
+  .mrow .k{width:26px;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+  .mrow .bar{flex:1}
+  .mrow .v{width:60px;text-align:right;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .chip{display:inline-flex;align-items:baseline;gap:5px;background:var(--chip);border-radius:20px;padding:1px 9px;font-size:11px;margin:0 5px 4px 0}
   @media (max-width:640px){ .hide-sm{display:none} h2{margin-top:20px} }
   </style>
  </head>
@@ -108,12 +114,14 @@ $DIR = __DIR__ . '/';
 $cpu=$mem=$cores=$ram=$load=$users=$time=$procs=$disk=$output=array();
 $gpu=$gpuindex=$name=$utilizationgpu=$utilizationmemory=array();
 $memorytotal=$memoryfree=$memoryused=$temperaturegpu=$powerdraw=$gpuusers=array();
+$dutime=$duusers=array(); // per-user disk usage, refreshed nightly by diskusage.py
 // (older .dat files also set $index; harmless)
 
 if (is_dir($DIR)) {
     if ($dh = opendir($DIR)) {
         while (($f = readdir($dh)) !== false) {
-            if (pathinfo($f, PATHINFO_EXTENSION) === $EXT && is_file($DIR.$f)) {
+            $e = pathinfo($f, PATHINFO_EXTENSION);
+            if (($e === $EXT || $e === 'du') && is_file($DIR.$f)) {
                 include($DIR.$f);
             }
         }
@@ -151,10 +159,15 @@ function hue_bar($frac){ // 0=green .. 1=red, clamped
     $hue = 120 - 120*$frac;
     return "hsl($hue,68%,45%)";
 }
-function bar($frac, $label){
+function bar($frac, $label, $title=''){
     $w = max(2, min(100, $frac*100));
     $col = hue_bar($frac);
-    return '<div class="bar"><span style="width:'.round($w,1).'%;background:'.$col.'"></span><em>'.h($label).'</em></div>';
+    $t = $title!=='' ? ' title="'.h($title).'"' : '';
+    return '<div class="bar"'.$t.'><span style="width:'.round($w,1).'%;background:'.$col.'"></span><em>'.h($label).'</em></div>';
+}
+function pbar($frac){ // compact, unlabeled bar
+    $w = max(2, min(100, $frac*100));
+    return '<div class="bar mini"><span style="width:'.round($w,1).'%;background:'.hue_bar($frac).'"></span></div>';
 }
 function fmt_ago($secs){
     $secs = max(0,(int)$secs);
@@ -300,9 +313,11 @@ for ($i = count($families); $i >= 0; $i--){
         } else {
             $barhtml = '<span class="mono muted">load '.(isset($load[$host][0])?h($load[$host][0]):'?').'</span>';
         }
-        // memory
-        $memtxt = isset($mem[$host]) ? round($mem[$host]).'%' : '?';
-        if (isset($ram[$host][0])) $memtxt .= ' <span class="muted">('.round($ram[$host][0]-$ram[$host][1]).'/'.round($ram[$host][0]).'GB)</span>';
+        // memory (bar, GB detail on hover)
+        if (isset($mem[$host])){
+            $mtitle = isset($ram[$host][0]) ? round($ram[$host][0]-$ram[$host][1]).' / '.round($ram[$host][0]).' GB used' : '';
+            $memtxt = bar($mem[$host]/100, round($mem[$host]).'%', $mtitle);
+        } else $memtxt = '<span class="muted">?</span>';
         // gpu quick count
         $gtxt='&ndash;';
         if (!empty($gpu[$host])){ $gf=0;$gt=0; foreach($gpu[$host] as $g){$gt++; if(gpu_is_free($g))$gf++;} $gtxt = $gf.'/'.$gt.' free'; }
@@ -330,49 +345,38 @@ if ($gpu_total>0){
     foreach ($gpu_hosts as $host){
         foreach ($gpu[$host] as $g){
             $free = gpu_is_free($g);
-            $util = isset($utilizationgpu[$g]) ? $utilizationgpu[$g] : '?';
-            $memused = isset($memoryused[$g]) ? $memoryused[$g] : '?';
-            $memtot = isset($memorytotal[$g]) ? $memorytotal[$g] : '?';
+            $util = isset($utilizationgpu[$g]) ? floatval($utilizationgpu[$g]) : 0;   // %
+            $mu = isset($memoryused[$g]) ? floatval($memoryused[$g]) : 0;             // MiB
+            $mt = isset($memorytotal[$g]) ? floatval($memorytotal[$g]) : 0;           // MiB
+            $memfrac = $mt>0 ? $mu/$mt : 0;
             $nm = isset($name[$g]) ? $name[$g] : '';
-            $temp = isset($temperaturegpu[$g]) ? $temperaturegpu[$g] : '';
-            $pow = isset($powerdraw[$g]) ? $powerdraw[$g] : '';
+            $temp = isset($temperaturegpu[$g]) ? floatval($temperaturegpu[$g]) : null;
+            $pow = isset($powerdraw[$g]) ? floatval($powerdraw[$g]) : null;
             $owners = isset($gpuusers[$g]) ? $gpuusers[$g] : array();
-            $who = count($owners) ? h(implode(', ', $owners)) : '<span class="badge free">free</span>';
             $idx = preg_replace('/^.*_/', '', $g);
-            $extra = array();
-            if ($temp!=='') $extra[] = h($temp).'&deg;C';
-            if ($pow!=='') $extra[] = h(preg_replace('/\s*W$/','',$pow)).'W';
-            printf('<div class="gpu%s" data-users="%s"><div class="top"><div><a href="#%s" class="host">%s</a> <span class="muted">#%s</span></div><div class="mono">%s</div></div>'.
-                   '<div class="nm">%s</div><div style="margin:6px 0">%s</div><div class="muted mono" style="font-size:11px">%s util &middot; %s/%s MB%s</div></div>',
+            if (count($owners)){
+                $who = '';
+                foreach ($owners as $o){
+                    list($on,$om) = owner_parts($o);
+                    $omtxt = $om===null ? '' : '<span class="muted">'.($om<1?'&lt;1':$om).'G</span>';
+                    $who .= '<span class="chip"><span class="host">'.h($on).'</span>'.$omtxt.'</span>';
+                }
+            } else $who = '<span class="badge free">free</span>';
+            $meta = array();
+            if ($temp!==null) $meta[] = round($temp).'&deg;';
+            if ($pow!==null) $meta[] = round($pow).'W';
+            printf('<div class="gpu%s" data-users="%s"><div class="top"><div><a href="#%s" class="host">%s</a> <span class="muted">#%s</span></div><div class="mono muted" style="font-size:11px">%s</div></div>'.
+                   '<div class="nm">%s</div><div style="margin:7px 0 3px">%s</div>'.
+                   '<div class="mrow"><span class="k">util</span>%s<span class="v">%d%%</span></div>'.
+                   '<div class="mrow"><span class="k">mem</span>%s<span class="v">%d/%d G</span></div></div>',
                    $free?' free':'', h(strtolower(implode(' ', array_map('gpu_owner_name',$owners)))),
-                   h($host), h($host), h($idx), $extra ? implode(' &middot; ', $extra) : '',
-                   h($nm), $who, h($util), h($memused), h($memtot),
-                   '');
+                   h($host), h($host), h($idx), implode(' &middot; ', $meta),
+                   h($nm), $who,
+                   pbar($util/100), round($util),
+                   pbar($memfrac), round($mu/1024), round($mt/1024));
         }
     }
     print('</div>');
-}
-
-// ---------------- disk ----------------
-$disk_rows = array();
-foreach ($responding as $host){
-    if (empty($disk[$host])) continue;
-    foreach ($disk[$host] as $mount=>$info){
-        $pct = $info[0];
-        if ($pct >= $DISK_WARN) $disk_rows[] = array($host,$mount,$info);
-    }
-}
-if (count($disk_rows)){
-    usort($disk_rows, function($a,$b){ return $b[2][0] <=> $a[2][0]; });
-    print('<h2>Disk pressure</h2><div class="card pad"><table><thead><tr><th>Machine</th><th>Filesystem</th><th>Full</th><th class="right">Used / Total</th></tr></thead><tbody>');
-    foreach ($disk_rows as $r){
-        list($host,$mount,$info) = $r;
-        $cls = $info[0] >= $DISK_CRIT ? 'critrow' : 'warnrow';
-        printf('<tr class="%s"><td><a href="#%s" class="host">%s</a></td><td class="mono">%s</td><td style="min-width:120px">%s</td><td class="right mono">%s / %s GB</td></tr>',
-                $cls, h($host), h($host), h($mount), bar($info[0]/100, round($info[0]).'%'),
-                number_format($info[1],0), number_format($info[2],0));
-    }
-    print('</tbody></table></div>');
 }
 
 // ---------------- unavailable ----------------
@@ -455,6 +459,56 @@ if (count($tu_cpu)){
     print('</tbody></table></div>');
 }
 
+// ---------------- disk ----------------
+$disk_rows = array();
+foreach ($responding as $host){
+    if (empty($disk[$host])) continue;
+    foreach ($disk[$host] as $mount=>$info){
+        $pct = $info[0];
+        if ($pct >= $DISK_WARN) $disk_rows[] = array($host,$mount,$info);
+    }
+}
+if (count($disk_rows)){
+    usort($disk_rows, function($a,$b){ return $b[2][0] <=> $a[2][0]; });
+    print('<h2>Disk pressure</h2><div class="card pad"><table><thead><tr><th>Machine</th><th>Filesystem</th><th>Full</th><th class="right">Used / Total</th></tr></thead><tbody>');
+    foreach ($disk_rows as $r){
+        list($host,$mount,$info) = $r;
+        $cls = $info[0] >= $DISK_CRIT ? 'critrow' : 'warnrow';
+        printf('<tr class="%s"><td><a href="#%s" class="host">%s</a></td><td class="mono">%s</td><td style="min-width:120px">%s</td><td class="right mono">%s / %s GB</td></tr>',
+                $cls, h($host), h($host), h($mount), bar($info[0]/100, round($info[0]).'%'),
+                number_format($info[1],0), number_format($info[2],0));
+    }
+    print('</tbody></table></div>');
+}
+
+// ---------------- disk usage by user (nightly) ----------------
+$du_hosts = array();
+foreach (array_keys($duusers) as $host){
+    if (!empty($duusers[$host])) $du_hosts[] = $host;
+}
+sort($du_hosts);
+if (count($du_hosts)){
+    print('<h2>Disk usage by user <span class="muted" style="font-weight:400;font-size:.7em">local disks &middot; refreshed nightly</span></h2>');
+    foreach ($du_hosts as $host){
+        $ago = isset($dutime[$host]) ? fmt_ago($now - $dutime[$host]) : 'unknown';
+        printf('<div class="card pad" id="du-%s"><div class="muted" style="margin-bottom:6px"><a href="#%s" class="host">%s</a> &middot; measured %s</div>',
+                h($host), h($host), h($host), h($ago));
+        foreach ($duusers[$host] as $mount=>$users){
+            if (empty($users)) continue;
+            $maxgb = max($users);
+            print('<div class="mono muted" style="margin:8px 0 2px">'.h($mount).'</div><table><tbody>');
+            foreach ($users as $u=>$gb){
+                $w = $maxgb > 0 ? max(2, min(100, $gb/$maxgb*100)) : 2;
+                $label = $gb >= 1000 ? number_format($gb/1000,1).' TB' : number_format($gb,0).' GB';
+                $nb = '<div class="bar"><span style="width:'.round($w,1).'%;background:#5b8def"></span><em>'.h($label).'</em></div>';
+                printf('<tr><td class="host" style="width:14em">%s</td><td>%s</td></tr>', h($u), $nb);
+            }
+            print('</tbody></table>');
+        }
+        print('</div>');
+    }
+}
+
 // ---------------- specs ----------------
 if (count($specs)){
     print('<h2>Specifications</h2><div class="card pad"><table><tbody>');
@@ -486,6 +540,11 @@ function machine_user_summary($host){
     return implode(', ', $parts);
 }
 function gpu_owner_name($s){ return preg_replace('/\s*\(.*$/','',strip_tags($s)); }
+function owner_parts($s){ // "name (19332MiB)" -> array('name', 19)
+    if (preg_match('/^(.*?)\s*\((\d+)\s*MiB\)\s*$/', strip_tags($s), $m))
+        return array($m[1], (int)round($m[2]/1024));
+    return array(strip_tags($s), null);
+}
 ?>
 </div>
 <script>
