@@ -92,8 +92,9 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
   .gpu.free{border-color:color-mix(in srgb,var(--good) 45%,var(--line))}
   .gpu .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   .gpu .nm{font-size:12px;color:var(--muted)}
-  .filterbox{margin:10px 0}
-  .filterbox input{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;width:220px}
+  .h2row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:26px 0 10px}
+  .h2row h2{margin:0}
+  #uf{padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;width:210px;max-width:55vw}
   .dim{opacity:.28} .hit{background:color-mix(in srgb,var(--accent) 12%,transparent)}
   .warnrow{color:var(--warn)} .critrow{color:var(--crit);font-weight:650}
   .foot{color:var(--muted);font-size:12px;margin:24px 0 8px;text-align:center}
@@ -188,6 +189,10 @@ function fmt_gb($gb){ // compact size label from a GB value
     if ($gb >= 10)   return number_format($gb,0).' GB';
     return number_format($gb,1).' GB';
 }
+function ucolor($name){ // stable colour for a username, consistent across servers
+    global $UCOLORS;
+    return $UCOLORS[(crc32(strtolower($name)) & 0x7fffffff) % count($UCOLORS)];
+}
 function prog_of($cmd){ // short program name from a command line
     $cmd = trim(strip_tags($cmd));
     $first = strtok($cmd, ' ');
@@ -263,11 +268,9 @@ if ($RULES_LINK_URL != '')
     $rules_link = '<a href="'.h($RULES_LINK_URL).'" style="color:inherit;text-decoration:underline;font-weight:normal;font-size:13px">'.h($RULES_LINK_TEXT).' &raquo;</a>';
 print('<div class="banner"><div>'.$RULES_HTML.'</div><div>'.$rules_link.'</div></div>');
 
-// user filter
-print('<div class="filterbox"><input id="uf" type="search" placeholder="highlight a user\'s jobs…" oninput="ufilter(this.value)" autocomplete="off"></div>');
-
 // ---------------- available machines ----------------
-print('<h2>Machines</h2>');
+// the user filter floats at the top-right of the Machines heading
+print('<div class="h2row"><h2>Machines</h2><input id="uf" type="search" placeholder="highlight a user\'s jobs…" oninput="ufilter(this.value)" autocomplete="off"></div>');
 $listed = $all;
 for ($i = count($families); $i >= 0; $i--){
     if ($i == 0){ $todo = $listed; }
@@ -462,7 +465,7 @@ if (count($disk_rows)){
             $seg = ''; $legend = ''; $shown_gb = 0; $i = 0; $TOPN = 8;
             foreach ($users as $u=>$gb){
                 if ($i >= $TOPN) break;
-                $w = $gb/$total_gb*100; $col = $UCOLORS[$i % count($UCOLORS)]; $shown_gb += $gb;
+                $w = $gb/$total_gb*100; $col = ucolor($u); $shown_gb += $gb;
                 $seg .= sprintf('<span style="width:%.3f%%;background:%s" title="%s: %s (%.0f%% of disk)"></span>',
                                 $w, $col, h($u), fmt_gb($gb), $w);
                 $legend .= sprintf('<span class="chip"><span class="dot" style="background:%s"></span>%s <span class="muted">%s &middot; %.0f%%</span></span>',
