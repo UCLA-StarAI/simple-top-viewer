@@ -263,20 +263,6 @@ if ($RULES_LINK_URL != '')
     $rules_link = '<a href="'.h($RULES_LINK_URL).'" style="color:inherit;text-decoration:underline;font-weight:normal;font-size:13px">'.h($RULES_LINK_TEXT).' &raquo;</a>';
 print('<div class="banner"><div>'.$RULES_HTML.'</div><div>'.$rules_link.'</div></div>');
 
-// ---------------- summary strip ----------------
-print('<div class="strip">');
-if ($fleet_busy!==null)
-    printf('<div class="stat"><div class="n">%d%%</div><div class="l">fleet busy</div><div class="sub">%s cores total</div></div>',
-            round($fleet_busy), number_format($total_cores));
-if ($gpu_total>0)
-    printf('<div class="stat"><div class="n">%d<span class="muted" style="font-size:15px"> / %d</span></div><div class="l">GPUs free</div><div class="sub">%d in use</div></div>',
-            $gpu_free, $gpu_total, $gpu_total-$gpu_free);
-printf('<div class="stat"><div class="n">%d</div><div class="l">active users</div></div>', count($all_users));
-if ($freest!==null)
-    printf('<div class="stat"><div class="n" style="font-size:18px">%s</div><div class="l">freest right now</div><div class="sub">%s cores idle</div></div>',
-            h($freest), round($freest_v));
-print('</div>');
-
 // user filter
 print('<div class="filterbox"><input id="uf" type="search" placeholder="highlight a user\'s jobs…" oninput="ufilter(this.value)" autocomplete="off"></div>');
 
