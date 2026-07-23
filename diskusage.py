@@ -118,12 +118,21 @@ if not acquire_lock():
     sys.exit(0)  # another scan is already running
 
 result = {}  # root -> {user: gb}
+seen_dirs = set()  # (st_dev, st_ino) of already-scanned roots
 try:
     for root in DU_ROOTS:
         if not os.path.isdir(root):
             continue
         if fstype_of(root) in NET_FS:
             continue  # shared filesystem: don't re-scan it from every host
+        try:
+            st = os.stat(os.path.realpath(root))
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            continue
+        if key in seen_dirs:
+            continue  # same directory via a symlink/bind mount; don't walk twice
+        seen_dirs.add(key)
         try:
             children = [(name, os.path.join(root, name)) for name in os.listdir(root)
                         if os.path.isdir(os.path.join(root, name))
