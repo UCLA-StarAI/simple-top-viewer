@@ -25,11 +25,11 @@ DISK_CANDIDATES = ['/', '/tmp', '/scratch', '/scratch2', '/space', '/data', '/lo
 
 # The expensive per-user disk scan (diskusage.py) is triggered from this script,
 # which already runs every 5 min on every machine -- so no extra crontab entry is
-# needed. It only fires in the quiet DU_HOUR window, only if the cached result is
-# stale, and only when the machine is idle-ish, so it never disturbs experiments.
-DU_HOUR = 5              # local hour (0-23) to run the nightly scan
-DU_MIN_AGE = 20 * 3600   # only rescan if the cached .du is older than this
-DU_MAX_LOAD = 0.5        # skip unless 1-min load is below this many per core
+# needed. It fires opportunistically: whenever the cached result is missing or a
+# day old AND the machine is not busy, so a fresh machine populates right away and
+# a busy one simply waits for a quiet tick. No fixed schedule, never during load.
+DU_MIN_AGE = 24 * 3600   # rescan only if the cached .du is missing or older than this
+DU_MAX_LOAD = 1.0        # skip unless 1-min load is below this many per core
 
 this_user = getpass.getuser()
 this_script = os.path.abspath(__file__)
@@ -282,8 +282,7 @@ try:
     except (ValueError, IndexError):
         load1 = float('inf')
     low_load = ncpus and load1 <= DU_MAX_LOAD * ncpus
-    if (os.path.exists(du_script) and time.localtime(now).tm_hour == DU_HOUR
-            and du_stale and low_load):
+    if os.path.exists(du_script) and du_stale and low_load:
         Popen([sys.executable or "python3", du_script],
               stdout=DEVNULL, stderr=DEVNULL, stdin=DEVNULL,
               close_fds=True, start_new_session=True)

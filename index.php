@@ -33,12 +33,13 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
     --bg:#f6f7f9; --card:#fff; --ink:#1c2128; --muted:#6a737d; --line:#e3e6ea;
     --accent:#2563eb; --good:#16a34a; --warn:#d97706; --crit:#dc2626;
     --chip:#eef1f5; --shadow:0 1px 2px rgba(0,0,0,.06),0 1px 3px rgba(0,0,0,.04);
+    --other:#c2cad4;
   }
   @media (prefers-color-scheme:dark){
     :root{
       --bg:#0d1117; --card:#161b22; --ink:#e6edf3; --muted:#8b949e; --line:#2a313c;
       --accent:#4f8cff; --good:#3fb950; --warn:#d29922; --crit:#f85149;
-      --chip:#21262d; --shadow:none;
+      --chip:#21262d; --shadow:none; --other:#4b545f;
     }
   }
   *{box-sizing:border-box}
@@ -102,6 +103,12 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
   .mrow .bar{flex:1}
   .mrow .v{width:60px;text-align:right;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   .chip{display:inline-flex;align-items:baseline;gap:5px;background:var(--chip);border-radius:20px;padding:1px 9px;font-size:11px;margin:0 5px 4px 0}
+  .dhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .stack{display:flex;height:22px;border-radius:8px;overflow:hidden;margin-top:10px;
+    background:color-mix(in srgb,var(--good) 22%,transparent)}
+  .stack > span{height:100%;transition:width .3s}
+  .stack > span + span{box-shadow:inset 1px 0 0 rgba(255,255,255,.35)}
+  .legend{margin-top:9px;display:flex;flex-wrap:wrap}
   @media (max-width:640px){ .hide-sm{display:none} h2{margin-top:20px} }
   </style>
  </head>
@@ -175,6 +182,11 @@ function fmt_ago($secs){
     if ($secs < 5400) return round($secs/60).'m ago';
     if ($secs < 172800) return round($secs/3600).'h ago';
     return round($secs/86400).'d ago';
+}
+function fmt_gb($gb){ // compact size label from a GB value
+    if ($gb >= 1000) return number_format($gb/1000,1).' TB';
+    if ($gb >= 10)   return number_format($gb,0).' GB';
+    return number_format($gb,1).' GB';
 }
 function prog_of($cmd){ // short program name from a command line
     $cmd = trim(strip_tags($cmd));
@@ -253,9 +265,6 @@ print('<div class="banner"><div>'.$RULES_HTML.'</div><div>'.$rules_link.'</div><
 
 // ---------------- summary strip ----------------
 print('<div class="strip">');
-printf('<div class="stat"><div class="n">%d</div><div class="l">machines up</div>%s</div>',
-        count($responding),
-        count($down)|| (count($all)-count($responding))>0 ? '<div class="sub">'.(count($all)-count($responding)).' unavailable</div>' : '<div class="sub">all reporting</div>');
 if ($fleet_busy!==null)
     printf('<div class="stat"><div class="n">%d%%</div><div class="l">fleet busy</div><div class="sub">%s cores total</div></div>',
             round($fleet_busy), number_format($total_cores));
@@ -267,27 +276,6 @@ if ($freest!==null)
     printf('<div class="stat"><div class="n" style="font-size:18px">%s</div><div class="l">freest right now</div><div class="sub">%s cores idle</div></div>',
             h($freest), round($freest_v));
 print('</div>');
-
-// ---------------- where should I run? ----------------
-$ranked = array();
-foreach ($responding as $host){ $fc = free_cores($host); if ($fc!==null) $ranked[$host] = $fc; }
-arsort($ranked);
-if (count($ranked)){
-    print('<h2>Where to run</h2><div class="card pad"><table><thead><tr><th>Machine</th><th>Idle cores</th><th>Free RAM</th><th>Free GPUs</th><th class="hide-sm">Load</th></tr></thead><tbody>');
-    $shown=0;
-    foreach ($ranked as $host=>$fc){
-        if ($shown++ >= 3) break;
-        $ramtxt = isset($ram[$host][1]) ? round($ram[$host][1]).' GB' : '&ndash;';
-        $gfree = 0; $gtot = 0;
-        if (!empty($gpu[$host])){ foreach ($gpu[$host] as $g){ $gtot++; if (gpu_is_free($g)) $gfree++; } }
-        $gtxt = $gtot ? ($gfree.' / '.$gtot) : '&ndash;';
-        $rec = ($shown===1) ? ' <span class="badge rec">best bet</span>' : '';
-        printf('<tr><td><a href="#%s" class="host">%s</a>%s</td><td>%d of %d</td><td>%s</td><td>%s</td><td class="hide-sm mono">%s</td></tr>',
-                h($host), h($host), $rec, round($fc), (int)$cores[$host], $ramtxt, $gtxt,
-                isset($load[$host][0])?h($load[$host][0]):'?');
-    }
-    print('</tbody></table></div>');
-}
 
 // user filter
 print('<div class="filterbox"><input id="uf" type="search" placeholder="highlight a user\'s jobs…" oninput="ufilter(this.value)" autocomplete="off"></div>');
@@ -459,51 +447,56 @@ if (count($tu_cpu)){
     print('</tbody></table></div>');
 }
 
-// ---------------- disk ----------------
+// ---------------- disk pressure (with per-user breakdown) ----------------
+$UCOLORS = array('#4f8cff','#f2994a','#27ae60','#eb5757','#9b51e0','#2d9cdb',
+                 '#e0a000','#e056a0','#00b8a3','#c0563b','#7d8ca3','#b07cd6');
 $disk_rows = array();
 foreach ($responding as $host){
     if (empty($disk[$host])) continue;
     foreach ($disk[$host] as $mount=>$info){
-        $pct = $info[0];
-        if ($pct >= $DISK_WARN) $disk_rows[] = array($host,$mount,$info);
+        if ($info[0] >= $DISK_WARN) $disk_rows[] = array($host,$mount,$info);
     }
 }
 if (count($disk_rows)){
     usort($disk_rows, function($a,$b){ return $b[2][0] <=> $a[2][0]; });
-    print('<h2>Disk pressure</h2><div class="card pad"><table><thead><tr><th>Machine</th><th>Filesystem</th><th>Full</th><th class="right">Used / Total</th></tr></thead><tbody>');
+    print('<h2>Disk pressure <span class="muted" style="font-weight:400;font-size:.7em">bar shows which users fill each disk</span></h2>');
     foreach ($disk_rows as $r){
         list($host,$mount,$info) = $r;
-        $cls = $info[0] >= $DISK_CRIT ? 'critrow' : 'warnrow';
-        printf('<tr class="%s"><td><a href="#%s" class="host">%s</a></td><td class="mono">%s</td><td style="min-width:120px">%s</td><td class="right mono">%s / %s GB</td></tr>',
-                $cls, h($host), h($host), h($mount), bar($info[0]/100, round($info[0]).'%'),
-                number_format($info[1],0), number_format($info[2],0));
-    }
-    print('</tbody></table></div>');
-}
+        list($pct,$used_gb,$total_gb) = $info;
+        $cls = $pct >= $DISK_CRIT ? 'critrow' : 'warnrow';
+        printf('<div class="card pad" style="margin-bottom:10px"><div class="dhead">'.
+               '<div><a href="#%s" class="host">%s</a> <span class="mono">%s</span> &middot; <span class="%s">%s%% full</span></div>'.
+               '<div class="mono muted">%s / %s</div></div>',
+               h($host), h($host), h($mount), $cls, round($pct), fmt_gb($used_gb), fmt_gb($total_gb));
 
-// ---------------- disk usage by user (nightly) ----------------
-$du_hosts = array();
-foreach (array_keys($duusers) as $host){
-    if (!empty($duusers[$host])) $du_hosts[] = $host;
-}
-sort($du_hosts);
-if (count($du_hosts)){
-    print('<h2>Disk usage by user <span class="muted" style="font-weight:400;font-size:.7em">local disks &middot; refreshed nightly</span></h2>');
-    foreach ($du_hosts as $host){
-        $ago = isset($dutime[$host]) ? fmt_ago($now - $dutime[$host]) : 'unknown';
-        printf('<div class="card pad" id="du-%s"><div class="muted" style="margin-bottom:6px"><a href="#%s" class="host">%s</a> &middot; measured %s</div>',
-                h($host), h($host), h($host), h($ago));
-        foreach ($duusers[$host] as $mount=>$users){
-            if (empty($users)) continue;
-            $maxgb = max($users);
-            print('<div class="mono muted" style="margin:8px 0 2px">'.h($mount).'</div><table><tbody>');
+        $users = isset($duusers[$host][$mount]) ? $duusers[$host][$mount] : array();
+        if ($users && $total_gb > 0){
+            // stacked bar over the whole disk: top users coloured, the rest of
+            // the used space grouped as "other", the remainder shown as free.
+            $seg = ''; $legend = ''; $shown_gb = 0; $i = 0; $TOPN = 8;
             foreach ($users as $u=>$gb){
-                $w = $maxgb > 0 ? max(2, min(100, $gb/$maxgb*100)) : 2;
-                $label = $gb >= 1000 ? number_format($gb/1000,1).' TB' : number_format($gb,0).' GB';
-                $nb = '<div class="bar"><span style="width:'.round($w,1).'%;background:#5b8def"></span><em>'.h($label).'</em></div>';
-                printf('<tr><td class="host" style="width:14em">%s</td><td>%s</td></tr>', h($u), $nb);
+                if ($i >= $TOPN) break;
+                $w = $gb/$total_gb*100; $col = $UCOLORS[$i % count($UCOLORS)]; $shown_gb += $gb;
+                $seg .= sprintf('<span style="width:%.3f%%;background:%s" title="%s: %s (%.0f%% of disk)"></span>',
+                                $w, $col, h($u), fmt_gb($gb), $w);
+                $legend .= sprintf('<span class="chip"><span class="dot" style="background:%s"></span>%s <span class="muted">%s &middot; %.0f%%</span></span>',
+                                $col, h($u), fmt_gb($gb), $w);
+                $i++;
             }
-            print('</tbody></table>');
+            $other = $used_gb - $shown_gb;
+            if ($other > 0.5){
+                $w = $other/$total_gb*100;
+                $seg .= sprintf('<span style="width:%.3f%%;background:var(--other)" title="other used: %s (%.0f%%)"></span>', $w, fmt_gb($other), $w);
+                $legend .= sprintf('<span class="chip"><span class="dot" style="background:var(--other)"></span>other used <span class="muted">%s</span></span>', fmt_gb($other));
+            }
+            $legend .= sprintf('<span class="chip"><span class="dot" style="background:color-mix(in srgb,var(--good) 45%%,transparent)"></span>free <span class="muted">%s</span></span>', fmt_gb(max(0,$total_gb-$used_gb)));
+            $ago = isset($dutime[$host]) ? ' &middot; measured '.h(fmt_ago($now-$dutime[$host])) : '';
+            printf('<div class="stack" title="%s of %s used">%s</div><div class="legend">%s</div>'.
+                   '<div class="muted" style="font-size:11px;margin-top:4px">who\'s using it%s</div>',
+                   fmt_gb($used_gb), fmt_gb($total_gb), $seg, $legend, $ago);
+        } else {
+            // no per-user data for this filesystem (e.g. a shared/NFS mount)
+            printf('<div style="margin-top:6px;max-width:300px">%s</div>', bar($pct/100, round($pct).'% full'));
         }
         print('</div>');
     }
