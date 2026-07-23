@@ -4,11 +4,24 @@ $ts = gmdate("D, d M Y H:i:s", time() + $seconds_to_cache) . " GMT";
 header("Expires: $ts");
 header("Pragma: cache");
 header("Cache-Control: max-age=$seconds_to_cache");
+
+// generic defaults; override them in config.local.php (not in git),
+// see config.example.php for a documented template
+$TITLE = 'Simple Top';
+$RULES_HTML = '<b>Basic rules:</b> be nice';
+$RULES_LINK_URL = '';   // optional link shown at the right of the rules banner
+$RULES_LINK_TEXT = '';
+$families = array();    // families of machines, e.g. array( 1 => array('host1','host2') )
+$families_notes = array( 0 => 'Other machines reporting' ); // machines not in a family
+$specs = array();       // hostname => description, shown in the Specifications section
+if (file_exists(__DIR__.'/config.local.php')) {
+    include(__DIR__.'/config.local.php');
+}
 ?>
 <!DOCTYPE html>
 <html>
  <head>
-  <title>StarAI Top</title>
+  <title><?php print($TITLE); ?></title>
   <meta http-equiv="refresh" content="300" >
   <link href="css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" type="text/css" href="css/style.css" media="screen" />
@@ -19,7 +32,7 @@ header("Cache-Control: max-age=$seconds_to_cache");
 /*ini_set('display_errors', 1);
 error_reporting(E_ALL);*/
 $EXT = 'dat';
-$DIR = "/home/guyvdb/www/top/";
+$DIR = __DIR__ . '/'; // .dat files live next to this script
 
 $cpu = array();
 $mem = array();
@@ -52,16 +65,6 @@ if (is_dir($DIR)) {
 //print_r($output);
 //print_r($cpu);
 
-// families of machines
-$families = array( 
-                   1 => array('orval','duvel','leffe','karmeliet')
-                 );
-
-$families_notes = array( 0 => 'Other machines reporting', // machines not in a family
-                         1 => '',
-                       );
-                       
-
 function color_bg($percent) {
   return 'style="background-color: hsl('.(120-120*$percent/100).', 100%, 85%);"';
 }
@@ -73,10 +76,12 @@ $top_users = array();
 $all = array_keys($cpu);
 $gpu_machines = array_keys($gpu);
 
-print('<div class="btn btn-large btn-block disabled" type="button"><b>Basic rules:</b> be nice</div>');
+$rules_link = '';
+if ($RULES_LINK_URL != '')
+    $rules_link = '<a href="'.$RULES_LINK_URL.'" style="position:absolute; right:15px; top:50%; transform:translateY(-50%); pointer-events:auto; color:inherit; text-decoration:underline; font-weight:normal;">'.$RULES_LINK_TEXT.' &raquo;</a>';
+print('<div class="btn btn-large btn-block disabled" type="button" style="position:relative;">'.$RULES_HTML.$rules_link.'</div>');
 
 print('<div class="left"><h3>Available machines</h3>');
-$c = 1;
 for ($i = count($families); $i >= 0; $i--) {
   // filter families
   $todo = array();
@@ -102,7 +107,7 @@ for ($i = count($families); $i >= 0; $i--) {
         $usr_counts = array_count_values($users[$key]);
         $uss = '';
         foreach ($usr_counts as $usr => $count) {
-          $uss .= "${count} x ${usr}, ";
+          $uss .= "{$count} x {$usr}, ";
           if (array_key_exists($usr, $top_users))
             $top_users[$usr] += $count;
           else
@@ -145,8 +150,7 @@ print('</div>');
 
 //----->GPU
 print('<div class="left"><h3>GPUs</h3>');
-$c = 1;
-printf('<div><h4>%s</h4>', $families_notes[5]);
+print('<div>');
 
 // start table
 print('<table class="table table-bordered table-condensed">');
@@ -172,13 +176,24 @@ print('</table></div>');
 print('</div>');
 //<---GPU
 
-// the non-resonding machines, including static ones
+// machines declared in a family that have never reported at all (no .dat file)
+$declared = array();
+foreach ($families as $fam)
+    $declared = array_merge($declared, $fam);
+foreach (array_diff($declared, array_keys($cpu)) as $key)
+    $not_responding[] = $key;
+
+// the non-responding machines, including static ones
 if (count($not_responding) > 0) {
     sort($not_responding);
     print('<div class="left"><h3>Unavailable machines</h3><ul>');
     foreach($not_responding as $key) {
-        printf('<li><a href="#%s">%s</a>, no data received since %s</li>',
-                $key, $key, date('l jS \of F, G:i:s', round(@$time[$key])));
+        if (isset($time[$key]))
+            printf('<li><a href="#%s">%s</a>, no data received since %s</li>',
+                    $key, $key, date('l jS \of F, G:i:s', round($time[$key])));
+        else
+            printf('<li><a href="#%s">%s</a>, no data received (never reported)</li>',
+                    $key, $key);
     }
     print('</ul><p></p></div>');
 }
@@ -204,12 +219,12 @@ if (count($top_users) != 0) {
 }
 
 // show some basic specs
-print('<div class="left"><h3>Specifications</h3><ol class="unstyled">');
-print('<li><i>duvel</i>: 40 threads, 504 Gb memory</li>');
-print('<li><i>karmeliet</i>: 32 threads, 126 Gb memory, 4 GPUs</li>');
-print('<li><i>leffe</i>: 32 threads, 126 Gb memory, 2 GPUs</li>');
-print('<li><i>orval</i>: 72 threads, 504 Gb memory, 2 GPUs</li>');
-print('</ol></div>');
+if (count($specs) != 0) {
+    print('<div class="left"><h3>Specifications</h3><ol class="unstyled">');
+    foreach ($specs as $machine => $description)
+        print('<li><i>'.$machine.'</i>: '.$description.'</li>');
+    print('</ol></div>');
+}
 
 ?>
 

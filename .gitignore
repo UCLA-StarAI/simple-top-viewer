@@ -1,1 +1,10 @@
 /*.dat
+
+# never publish credentials or local server config (this repo is public)
+.htpasswd
+.htaccess
+config.local.php
+
+# local backups
+*.bak-*
+__pycache__/

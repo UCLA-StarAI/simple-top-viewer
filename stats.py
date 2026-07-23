@@ -1,16 +1,26 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # gather linux system statistics and output in html/php for this machine
 
 #import commands
 from subprocess import *
-import sys
 import getpass
+import html
 import os
 import time
 import csv
 
+
+def php_escape(s):
+  """Escape a string for embedding in a single-quoted PHP string.
+
+  Replaces python2's str.encode('string_escape'): escapes backslashes and
+  non-printables, then single quotes (which unicode_escape leaves alone).
+  """
+  return s.encode('unicode_escape').decode('ascii').replace("'", "\\'")
+
 NUMPROCS=100
-DIR="/home/guyvdb/www/top"
+# .dat files are written next to this script (the shared web directory)
+DIR=os.path.dirname(os.path.abspath(__file__))
 EXT="dat"
 
 ########
@@ -18,11 +28,15 @@ EXT="dat"
 output = ""
 
 # uptime information:
-uptime = Popen("uptime", shell=True, stdout=PIPE, stderr=STDOUT, close_fds=True).communicate()[0].strip()
-output += "<tr><td colspan=\"6\">%s</td></tr>"%uptime
-load = uptime.split('load average: ')[1].split(', ')
+uptime = Popen("uptime", shell=True, stdout=PIPE, stderr=STDOUT, close_fds=True, universal_newlines=True).communicate()[0].strip()
+output += "<tr><td colspan=\"6\">%s</td></tr>"%html.escape(uptime)
+# uptime always reports load on Linux, but guard so a hiccup can't kill the update
+if 'load average: ' in uptime:
+    load = uptime.split('load average: ')[1].split(', ')
+else:
+    load = ['0.0', '0.0', '0.0']
 
-procs = Popen("ps axw -o user:25,nice,pcpu,pmem,etime,args --sort -pcpu | head -n %i"%(NUMPROCS+3), shell=True, stdout=PIPE, stderr=STDOUT, close_fds=True).communicate()[0].strip().split("\n")
+procs = Popen("ps axw -o user:25,nice,pcpu,pmem,etime,args --sort -pcpu | head -n %i"%(NUMPROCS+3), shell=True, stdout=PIPE, stderr=STDOUT, close_fds=True, universal_newlines=True).communicate()[0].strip().split("\n")
 #p = Popen("top -c -b -n1 | head -n14", shell=True, stdout=PIPE, stderr=STDOUT, close_fds=True)
 #procs = p.stdout.readlines()
 #procs = commands.getoutput("top -b -n1 | head -15").split("\n")
@@ -36,7 +50,12 @@ for proc in procs:
   if nprocs > NUMPROCS:
     break
 
-  d = [x for x in proc.strip().split(" ") if x != '']
+  # HTML-escape every field: usernames and command lines are attacker-influenced
+  # (anyone can launch a process named '<script>...'), and index.php prints them
+  # raw. Escaping the values here (before we add our own <b>/<i> markup) stops
+  # stored XSS; the paths/numbers compared below contain no special chars, so
+  # the filters are unaffected.
+  d = [html.escape(x) for x in proc.strip().split(" ") if x != '']
   #dd = [x for x in procs[i].strip().split(" ") if x != '']
   #cols = [1,3,8,9,10,11]
   #d = [dd[i] for i in cols]
@@ -55,7 +74,7 @@ for proc in procs:
      (d[0] == this_user and d[5] == 'ps' and d[6] == 'axw') or \
      (d[0] == this_user and d[5] == '/bin/sh' and d[7] == 'ps' and d[8] == 'axw') or \
      d[-1] == this_script or \
-     (d[5] == '/usr/bin/python' and d[6] == this_script):
+     (d[5].startswith('/usr/bin/python') and d[6] == this_script):
     continue
 
   # busy process in bold
@@ -83,8 +102,8 @@ for proc in procs:
 ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
 totcpu = totcpu/ncpus
 
-p = Popen("hostname", shell=True, stdout=PIPE, close_fds=True)
-hostname = p.stdout.readline().strip().lower().replace('.cs.ucla.edu','')
+p = Popen("hostname", shell=True, stdout=PIPE, close_fds=True, universal_newlines=True)
+hostname = p.stdout.readline().strip().lower().split('.')[0]
 #hostname = commands.getoutput("hostname")
 
 
@@ -96,18 +115,17 @@ for att in query_attributes:
 gpu = False
 ###GPU
 try:
-    p2 = Popen(['nvidia-smi', '--query-gpu='+','.join(query_attributes), '--format=csv'], stdout=PIPE, close_fds=True)
+    p2 = Popen(['nvidia-smi', '--query-gpu='+','.join(query_attributes), '--format=csv'], stdout=PIPE, close_fds=True, universal_newlines=True)
     gpu_csv = csv.reader(p2.stdout, skipinitialspace=True)
-    headers = gpu_csv.next()
+    next(gpu_csv)  # skip header row
     for row in gpu_csv:
-        index = row[0]
-        name = hostname+'_'+index
+        name = hostname+'_'+row[0]
         gpus.append(name)
         for i,att in enumerate(query_attributes):
             gpu_info[att][name] = row[i]
     gpu = True
     
-except Exception as e:
+except Exception:
     pass
 ###
 
@@ -115,19 +133,26 @@ except Exception as e:
 
 output = "<tr><td colspan=\"6\"><b>%s</b> (CPU:%.1f%% - MEM:%.1f%%)</td></tr>"%(hostname, totcpu,totmem)+output
 
-f = open("%s/%s.%s"%(DIR,hostname,EXT), "w")
-f.write("<?php\n")
-f.write("$cpu['%s'] = %.1f;\n"%(hostname,totcpu))
+dat = "<?php\n"
+dat += "$cpu['%s'] = %.1f;\n"%(hostname,totcpu)
 if gpu:
-    f.write("$gpu['{}'] = array('{}');\n".format(hostname,"', '".join(gpus)))
-f.write("$mem['%s'] = %.1f;\n"%(hostname,totmem))
-f.write("$load['%s'] = array('%s');\n"%(hostname,"', '".join(load)))
-f.write("$users['%s'] = array('%s');\n"%(hostname,"', '".join(users)))
-f.write("$time['%s'] = %s;\n"%(hostname, time.time()))
-f.write("$output['%s'] = '%s';\n"%(hostname,output.encode('string_escape')))
+    dat += "$gpu['{}'] = array('{}');\n".format(hostname,"', '".join(gpus))
+dat += "$mem['%s'] = %.1f;\n"%(hostname,totmem)
+dat += "$load['%s'] = array('%s');\n"%(hostname,"', '".join(load))
+dat += "$users['%s'] = array('%s');\n"%(hostname,"', '".join(users))
+dat += "$time['%s'] = %s;\n"%(hostname, time.time())
+dat += "$output['%s'] = '%s';\n"%(hostname,php_escape(output))
 if gpu:
     for att in query_attributes:
         for g in gpus:
-            f.write("${}['{}'] = '{}';\n".format(att.replace('.',''),g,gpu_info[att][g]))
-f.write("?>")
-f.close()
+            dat += "${}['{}'] = '{}';\n".format(att.replace('.',''),g,gpu_info[att][g])
+dat += "?>"
+
+# Write atomically: index.php include()s these files (over NFS) on every page
+# load, so a reader must never observe a half-written file. Write to a temp
+# file in the same directory, then rename it into place in one step.
+final = "%s/%s.%s"%(DIR,hostname,EXT)
+tmp = "%s.tmp.%d"%(final, os.getpid())
+with open(tmp, "w") as f:
+    f.write(dat)
+os.replace(tmp, final)

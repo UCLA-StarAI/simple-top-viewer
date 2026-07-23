@@ -20,4 +20,12 @@ How to test
 * run ./stats.py to generate at least one .dat file
 * browse to the correct location on your webserver
 
+Configuration
+-------------
+Site-specific settings (page title, machine families, hardware specs, banner
+link) live in config.local.php, which is git-ignored so they stay out of the
+public repository. Copy config.example.php to config.local.php and edit it;
+without one, index.php falls back to generic defaults. stats.py needs no
+configuration: it writes its .dat file next to itself.
+
 Improvements and patches welcome.
