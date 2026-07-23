@@ -29,7 +29,7 @@ DISK_CANDIDATES = ['/', '/tmp', '/scratch', '/scratch2', '/space', '/data', '/lo
 # day old AND the machine is not busy, so a fresh machine populates right away and
 # a busy one simply waits for a quiet tick. No fixed schedule, never during load.
 DU_MIN_AGE = 24 * 3600   # rescan only if the cached .du is missing or older than this
-DU_MAX_LOAD = 1.0        # skip unless 1-min load is below this many per core
+DU_MAX_LOAD = 2.0        # skip unless the 1-min load average is below this (absolute)
 
 this_user = getpass.getuser()
 this_script = os.path.abspath(__file__)
@@ -281,7 +281,7 @@ try:
         load1 = float(load[0])
     except (ValueError, IndexError):
         load1 = float('inf')
-    low_load = ncpus and load1 <= DU_MAX_LOAD * ncpus
+    low_load = load1 <= DU_MAX_LOAD
     if os.path.exists(du_script) and du_stale and low_load:
         Popen([sys.executable or "python3", du_script],
               stdout=DEVNULL, stderr=DEVNULL, stdin=DEVNULL,
