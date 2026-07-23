@@ -1,4 +1,5 @@
 /*.dat
+/*.hist
 
 # never publish credentials or local server config (this repo is public)
 .htpasswd
