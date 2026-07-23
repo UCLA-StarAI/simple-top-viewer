@@ -190,7 +190,8 @@ function fmt_gb($gb){ // compact size label from a GB value
     return number_format($gb,1).' GB';
 }
 function ucolor($name){ // stable colour for a username, consistent across servers
-    global $UCOLORS;
+    global $UCOLORS, $ucolor_map;
+    if (isset($ucolor_map[$name])) return $ucolor_map[$name];
     return $UCOLORS[(crc32(strtolower($name)) & 0x7fffffff) % count($UCOLORS)];
 }
 function prog_of($cmd){ // short program name from a command line
@@ -437,8 +438,9 @@ if (count($tu_cpu)){
 }
 
 // ---------------- disk pressure (with per-user breakdown) ----------------
-$UCOLORS = array('#4f8cff','#f2994a','#27ae60','#eb5757','#9b51e0','#2d9cdb',
-                 '#e0a000','#e056a0','#00b8a3','#c0563b','#7d8ca3','#b07cd6');
+$UCOLORS = array('#4f8cff','#f2994a','#27ae60','#eb5757','#9b51e0','#17becf',
+                 '#e0a000','#e056a0','#00b8a3','#c0563b','#7d8ca3','#b07cd6',
+                 '#8c6d31','#6c7ae0');
 $disk_rows = array();
 foreach ($responding as $host){
     if (empty($disk[$host])) continue;
@@ -448,6 +450,19 @@ foreach ($responding as $host){
 }
 if (count($disk_rows)){
     usort($disk_rows, function($a,$b){ return $b[2][0] <=> $a[2][0]; });
+    // Assign colours by total usage rank across all shown disks, so the biggest
+    // (most visible) users always get distinct colours and the same user keeps
+    // one colour everywhere. Hashing alone collided big users (e.g. two 800GB
+    // users landing on the same slot); ranking avoids that for the ones on show.
+    $utotal = array();
+    foreach ($disk_rows as $r){
+        if (empty($duusers[$r[0]][$r[1]])) continue;
+        foreach ($duusers[$r[0]][$r[1]] as $u=>$gb)
+            $utotal[$u] = (isset($utotal[$u]) ? $utotal[$u] : 0) + $gb;
+    }
+    arsort($utotal);
+    $ucolor_map = array(); $rk = 0;
+    foreach ($utotal as $u=>$t){ $ucolor_map[$u] = $UCOLORS[$rk % count($UCOLORS)]; $rk++; }
     print('<h2>Disk pressure <span class="muted" style="font-weight:400;font-size:.7em">bar shows which users fill each disk</span></h2>');
     foreach ($disk_rows as $r){
         list($host,$mount,$info) = $r;
