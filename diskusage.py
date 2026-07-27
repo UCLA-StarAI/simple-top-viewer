@@ -15,6 +15,10 @@
 #   * caps each filesystem with a timeout so a runaway scan cannot pile up.
 #
 # It writes <hostname>.du (PHP) next to this script; index.php displays it.
+# Results are keyed by the MOUNT POINT holding each scanned root (roots that
+# share a filesystem are merged), so the page can match them to its df bars
+# even where a data root like /space is a plain directory on the root fs.
+# Loose files sitting directly in a scan root are attributed to their owner.
 #
 # Run as a regular user it cannot descend into other users' unreadable
 # directories, so totals undercount. For full-visibility numbers, install the
@@ -31,6 +35,7 @@
 
 import html
 import os
+import pwd
 import shutil
 import sys
 import time
@@ -87,6 +92,27 @@ def fstype_of(path):
     return ''
 
 
+def mount_of(path):
+    """Mount point holding path (longest prefix wins); path itself if unknown."""
+    rp = os.path.realpath(path)
+    for (mp, ty) in MOUNTS:
+        if rp == mp or rp.startswith(mp.rstrip('/') + '/'):
+            return mp
+    return path
+
+
+def owner_of(path):
+    """Owning username of path, numeric uid if unmapped, None if unstattable."""
+    try:
+        uid = os.stat(path).st_uid
+    except OSError:
+        return None
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
 # be gentle on the machine
 try:
     os.nice(19)
@@ -127,7 +153,7 @@ def acquire_lock():
 if not acquire_lock():
     sys.exit(0)  # another scan is already running
 
-result = {}  # root -> {user: gb}
+result = {}  # mount point -> {user: gb}
 seen_dirs = set()  # (st_dev, st_ino) of already-scanned roots
 try:
     for root in DU_ROOTS:
@@ -143,16 +169,24 @@ try:
         if key in seen_dirs:
             continue  # same directory via a symlink/bind mount; don't walk twice
         seen_dirs.add(key)
+        # per-user subdirectories, plus loose files sitting directly in the
+        # root (attributed to their owner rather than their name)
         try:
-            children = [(name, os.path.join(root, name)) for name in os.listdir(root)
-                        if os.path.isdir(os.path.join(root, name))
-                        and not os.path.islink(os.path.join(root, name))]
+            children = []
+            for name in os.listdir(root):
+                p = os.path.join(root, name)
+                if os.path.islink(p):
+                    continue
+                if os.path.isdir(p):
+                    children.append((name, p, False))
+                elif os.path.isfile(p):
+                    children.append((name, p, True))
         except OSError:
             continue
         if not children:
             continue
 
-        args = prefix + ['du', '-sb', '--one-file-system'] + [p for (_, p) in children]
+        args = prefix + ['du', '-sb', '--one-file-system'] + [p for (_, p, _f) in children]
         proc = Popen(args, stdout=PIPE, stderr=DEVNULL, universal_newlines=True)
         try:
             out = proc.communicate(timeout=DU_TIMEOUT)[0]
@@ -175,25 +209,29 @@ try:
             except ValueError:
                 continue
 
-        usage = {}
-        for (name, p) in children:
+        # merge into the entry for the filesystem this root lives on; MIN_GB
+        # and TOP_N are applied after merging, at output time
+        agg = result.setdefault(mount_of(root), {})
+        for (name, p, is_file) in children:
             b = bytes_by_path.get(p)
             if b is None:
                 continue
-            gb = b / 1e9
-            if gb >= MIN_GB:
-                usage[name] = gb
-        if usage:
-            top = sorted(usage.items(), key=lambda kv: kv[1], reverse=True)[:TOP_N]
-            result[root] = top
+            user = owner_of(p) if is_file else name
+            if user is None:
+                continue
+            agg[user] = agg.get(user, 0.0) + b / 1e9
 
     now = int(time.time())
     dat = "<?php\n"
     dat += "$dutime['%s'] = %d;\n" % (hostname, now)
     parts = []
-    for root, usage in result.items():
-        inner = ", ".join("'%s' => %.1f" % (cell(u), gb) for (u, gb) in usage)
-        parts.append("'%s' => array(%s)" % (cell(root), inner))
+    for mount, usage in result.items():
+        top = sorted(((u, gb) for (u, gb) in usage.items() if gb >= MIN_GB),
+                     key=lambda kv: kv[1], reverse=True)[:TOP_N]
+        if not top:
+            continue
+        inner = ", ".join("'%s' => %.1f" % (cell(u), gb) for (u, gb) in top)
+        parts.append("'%s' => array(%s)" % (cell(mount), inner))
     dat += "$duusers['%s'] = array(%s);\n" % (hostname, ", ".join(parts))
     dat += "?>"
 
