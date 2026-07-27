@@ -49,6 +49,13 @@ user-controlled path:
   ever breaks, the published file simply ages out and stats.py's user-level
   fallback scan takes over again.
 
+With root visibility, everything on a monitored filesystem gets attributed:
+per-user data directories by name, and everything else — the OS install,
+stray files — by file owner, so the system itself shows up as 'root' rather
+than as an anonymous remainder. Users below the display threshold are pooled
+into a single '(small users)' entry. What stays unattributed after that is
+essentially deleted-but-open files and filesystem metadata.
+
 Nothing in the pipeline is site-specific: at install time the installer
 derives the web directory (the one it sits in) and the publishing user (that
 directory's owner) and substitutes them into the installed copies.

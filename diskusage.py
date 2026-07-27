@@ -20,6 +20,13 @@
 # even where a data root like /space is a plain directory on the root fs.
 # Loose files sitting directly in a scan root are attributed to their owner.
 #
+# Everything else on a monitored filesystem is attributed too: a remainder
+# pass walks the parts not covered by a scan root and sums disk blocks by
+# file owner, so the OS install shows up as 'root' instead of an anonymous
+# grey remainder. Users below MIN_GB (and past TOP_N) are pooled into one
+# '(small users)' entry. What's left unattributed after that is essentially
+# deleted-but-open files and filesystem metadata.
+#
 # Run as a regular user it cannot descend into other users' unreadable
 # directories, so totals undercount. For full-visibility numbers, install the
 # root-side pipeline (see install-disk-usage and the README): a root cron job
@@ -32,6 +39,9 @@
 #   TOP_DU_DIR     write <hostname>.du (and the lock) here instead of next to
 #                  this script — used by the root-side collector, which runs a
 #                  root-owned copy and drops output in /var/lib/disk-usage
+#   TOP_DU_WALK_MOUNTS  colon-separated mounts for the by-owner remainder walk
+#                  (default: / /tmp /var plus mounts holding scan roots);
+#                  set empty to disable the remainder pass entirely
 
 import html
 import os
@@ -53,6 +63,14 @@ DU_TIMEOUT = 5400     # seconds, hard cap per filesystem (90 min)
 LOCK_STALE = 4 * 3600 # a lock older than this is treated as a crashed run
 NET_FS = set(['nfs', 'nfs4', 'cifs', 'smbfs', 'smb3', 'fuse.sshfs', 'lustre',
               'gpfs', 'ceph', 'glusterfs', 'afs', '9p', 'fuse.glusterfs', 'beegfs'])
+PSEUDO_FS = set(['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'proc', 'sysfs',
+                 'devpts', 'cgroup', 'cgroup2', 'pstore', 'efivarfs', 'autofs',
+                 'tracefs', 'debugfs', 'securityfs', 'fusectl', 'ramfs', 'bpf',
+                 'binfmt_misc', 'rpc_pipefs'])
+# mounts whose *entire* contents get the by-owner remainder walk (on top of
+# any mounts that turn out to hold a scan root); non-mounts are skipped
+FULL_WALK_MOUNTS = ['/', '/tmp', '/var']
+SMALL_LABEL = '(small users)'  # pooled entry for below-threshold users
 
 # env overrides
 if os.environ.get('TOP_DU_ROOTS'):
@@ -62,6 +80,9 @@ if os.environ.get('TOP_DU_MIN_GB'):
         MIN_GB = float(os.environ['TOP_DU_MIN_GB'])
     except ValueError:
         pass
+WALK_OVERRIDE = os.environ.get('TOP_DU_WALK_MOUNTS') is not None
+if WALK_OVERRIDE:
+    FULL_WALK_MOUNTS = [p for p in os.environ['TOP_DU_WALK_MOUNTS'].split(':') if p]
 
 
 def cell(s):
@@ -101,23 +122,79 @@ def mount_of(path):
     return path
 
 
-def owner_of(path):
-    """Owning username of path, numeric uid if unmapped, None if unstattable."""
-    try:
-        uid = os.stat(path).st_uid
-    except OSError:
-        return None
+def uname_of(uid):
+    """Username for uid, or the numeric uid as a string if unmapped."""
     try:
         return pwd.getpwuid(uid).pw_name
     except KeyError:
         return str(uid)
 
 
-# be gentle on the machine
+def owner_of(path):
+    """Owning username of path, numeric uid if unmapped, None if unstattable."""
+    try:
+        return uname_of(os.stat(path).st_uid)
+    except OSError:
+        return None
+
+
+def walk_by_owner(top, skip, agg, deadline):
+    """Sum disk blocks (what df counts, not apparent size) by file owner for
+    everything under top on the same device, skipping the subtrees in `skip`
+    (already scanned) and anything on another filesystem. Best effort:
+    unreadable entries are ignored, multiply-linked files count once, and the
+    walk stops adding at deadline (undercount then just stays grey)."""
+    top = os.path.realpath(top)
+    try:
+        dev = os.stat(top).st_dev
+    except OSError:
+        return
+    seen = set()   # (dev, ino) of files with nlink > 1
+    stack = [top]
+    n = 0
+    while stack:
+        d = stack.pop()
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        for e in entries:
+            n += 1
+            if n % 4096 == 0 and time.time() > deadline:
+                return
+            try:
+                st = e.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if st.st_dev != dev:
+                continue   # another filesystem's mount point
+            if e.is_dir(follow_symlinks=False):
+                if e.path in skip:
+                    continue
+                agg_user = uname_of(st.st_uid)
+                agg[agg_user] = agg.get(agg_user, 0.0) + st.st_blocks * 512 / 1e9
+                stack.append(e.path)
+                continue
+            if st.st_nlink > 1:
+                key = (st.st_dev, st.st_ino)
+                if key in seen:
+                    continue
+                seen.add(key)
+            agg_user = uname_of(st.st_uid)
+            agg[agg_user] = agg.get(agg_user, 0.0) + st.st_blocks * 512 / 1e9
+
+
+# be gentle on the machine (CPU and, for our own walk, I/O)
 try:
     os.nice(19)
 except Exception:
     pass
+if shutil.which('ionice'):
+    try:
+        Popen(['ionice', '-c3', '-p', str(os.getpid())],
+              stdout=DEVNULL, stderr=DEVNULL).communicate()
+    except Exception:
+        pass
 
 hostname = Popen(["hostname"], stdout=PIPE, universal_newlines=True
                  ).communicate()[0].strip().lower().split('.')[0] or "unknown"
@@ -155,6 +232,7 @@ if not acquire_lock():
 
 result = {}  # mount point -> {user: gb}
 seen_dirs = set()  # (st_dev, st_ino) of already-scanned roots
+scanned_rp = set()  # realpaths of scan roots, excluded from the remainder walk
 try:
     for root in DU_ROOTS:
         if not os.path.isdir(root):
@@ -169,6 +247,7 @@ try:
         if key in seen_dirs:
             continue  # same directory via a symlink/bind mount; don't walk twice
         seen_dirs.add(key)
+        scanned_rp.add(os.path.realpath(root))
         # per-user subdirectories, plus loose files sitting directly in the
         # root (attributed to their owner rather than their name)
         try:
@@ -221,13 +300,36 @@ try:
                 continue
             agg[user] = agg.get(user, 0.0) + b / 1e9
 
+    # ---- remainder pass: attribute everything not under a scan root to its
+    # file owner, so the OS install appears as 'root' instead of as grey ----
+    mount_types = dict(MOUNTS)
+    candidates = set(FULL_WALK_MOUNTS)
+    if not WALK_OVERRIDE:
+        candidates |= set(mount_of(r) for r in scanned_rp)
+    for m in sorted(candidates):
+        rp = os.path.realpath(m)
+        if not WALK_OVERRIDE:
+            ty = mount_types.get(rp)
+            if ty is None or ty in NET_FS or ty in PSEUDO_FS:
+                continue   # not a local-disk mount (or lives inside one above)
+        if rp in scanned_rp:
+            continue       # a scan root that is its own mount: already covered
+        agg = result.setdefault(mount_of(rp), {})
+        walk_by_owner(rp, scanned_rp, agg, time.time() + DU_TIMEOUT)
+
     now = int(time.time())
     dat = "<?php\n"
     dat += "$dutime['%s'] = %d;\n" % (hostname, now)
     parts = []
     for mount, usage in result.items():
-        top = sorted(((u, gb) for (u, gb) in usage.items() if gb >= MIN_GB),
-                     key=lambda kv: kv[1], reverse=True)[:TOP_N]
+        ranked = sorted(usage.items(), key=lambda kv: kv[1], reverse=True)
+        top = [(u, gb) for (u, gb) in ranked if gb >= MIN_GB][:TOP_N]
+        shown = set(u for (u, _gb) in top)
+        # below-threshold and past-TOP_N users are pooled, not dropped, so
+        # light users are distinguishable from the truly unattributed grey
+        small = sum(gb for (u, gb) in ranked if u not in shown)
+        if small >= 0.5:
+            top.append((SMALL_LABEL, small))
         if not top:
             continue
         inner = ", ".join("'%s' => %.1f" % (cell(u), gb) for (u, gb) in top)
