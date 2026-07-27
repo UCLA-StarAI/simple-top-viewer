@@ -1,0 +1,34 @@
+#!/bin/bash
+# deploy-disk-usage — run the disk-usage installer on a list of machines:
+#
+#   ./deploy-disk-usage machine1 machine2 ...
+#
+# Assumes this checkout lives on a directory all machines share (NFS), so
+# the installer has the same path everywhere; it defaults to this script's
+# own directory. Set DISK_USAGE_INSTALLER=/path/on/the/machines if you run
+# this from somewhere the shared path differs (e.g. your workstation).
+#
+# Run as yourself, NOT with sudo — you'll get one sudo prompt per machine.
+
+set -euo pipefail
+
+(( $# )) || { echo "usage: $0 machine [machine...]" >&2; exit 1; }
+HERE=$(cd "$(dirname "$0")" && pwd)
+INSTALLER="${DISK_USAGE_INSTALLER:-$HERE/install-disk-usage}"
+
+failed=()
+for h in "$@"; do
+    echo "=== $h"
+    if ssh -t "$h" "sudo bash '$INSTALLER'"; then
+        echo "=== $h OK"
+    else
+        echo "=== $h FAILED" >&2
+        failed+=("$h")
+    fi
+done
+
+if (( ${#failed[@]} )); then
+    echo "failed on: ${failed[*]}" >&2
+    exit 1
+fi
+echo "all $# machines done"

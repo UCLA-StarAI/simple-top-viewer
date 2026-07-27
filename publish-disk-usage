@@ -1,0 +1,40 @@
+#!/bin/bash
+# publish-disk-usage — copy the root-collected <host>.du from the local drop
+# directory into the shared web directory (NFS) that index.php reads.
+#
+# Runs UNPRIVILEGED from /etc/cron.d/disk-usage every 10 minutes. Running as
+# a regular user is the point: if anything hostile lives in the web
+# directory, this process has no privileges to abuse.
+#
+# Timestamps are preserved (cp -p) and we only publish when root's file is
+# newer than what is already in the web dir. So if the root pipeline ever
+# breaks, the published .du simply ages, and stats.py's own user-level
+# fallback scan takes over again — and we never clobber that fresher
+# fallback data with a stale root file.
+#
+# Installed by install-disk-usage to /usr/local/bin/publish-disk-usage
+# (root-owned 0755: the web-dir owner runs it but cannot edit it), with
+# @WEB_DIR@ filled in from wherever the installer sits.
+
+set -euo pipefail
+export PATH=/usr/bin:/bin
+umask 022
+
+host=$(hostname -s | tr '[:upper:]' '[:lower:]')
+SRC="/var/lib/disk-usage/$host.du"
+DEST_DIR="@WEB_DIR@"                     # substituted by install-disk-usage
+DEST="$DEST_DIR/$host.du"
+
+[[ -r "$SRC" ]] || exit 0                # root hasn't produced a file yet
+if [[ -e "$DEST" && ! "$SRC" -nt "$DEST" ]]; then
+    exit 0                               # nothing newer to publish
+fi
+
+# Atomic publish so index.php never reads a half-copied file: stage next to
+# the destination (same filesystem), then rename over it.
+tmp=$(mktemp "$DEST_DIR/.$host.du.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cp -p -- "$SRC" "$tmp"
+chmod 0644 "$tmp"
+mv -f -T -- "$tmp" "$DEST"
+trap - EXIT

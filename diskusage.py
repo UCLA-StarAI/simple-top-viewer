@@ -16,9 +16,18 @@
 #
 # It writes <hostname>.du (PHP) next to this script; index.php displays it.
 #
+# Run as a regular user it cannot descend into other users' unreadable
+# directories, so totals undercount. For full-visibility numbers, install the
+# root-side pipeline (see install-disk-usage and the README): a root cron job
+# runs a root-owned copy of this script with TOP_DU_DIR pointing at a local
+# drop directory, and an unprivileged job publishes the result here.
+#
 # Env overrides (handy for testing / ops):
 #   TOP_DU_ROOTS   colon-separated list of roots to scan
 #   TOP_DU_MIN_GB  ignore users below this many GB (default 5)
+#   TOP_DU_DIR     write <hostname>.du (and the lock) here instead of next to
+#                  this script — used by the root-side collector, which runs a
+#                  root-owned copy and drops output in /var/lib/disk-usage
 
 import html
 import os
@@ -28,6 +37,7 @@ import time
 from subprocess import Popen, PIPE, DEVNULL, TimeoutExpired
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.environ.get('TOP_DU_DIR', DIR)  # where <hostname>.du and the lock go
 EXT = "du"
 # roots whose immediate subdirectories are per-user data dirs (/scratch/<user>).
 # non-existent and network-mounted roots are skipped automatically.
@@ -95,7 +105,7 @@ if shutil.which('nice'):
 
 # single-instance lock: the 5-minute stats.py may fire this several times during
 # the nightly window, and a scan can outlive the hour, so refuse to run twice.
-LOCK = "%s/%s.du.lock" % (DIR, hostname)
+LOCK = "%s/%s.du.lock" % (OUT_DIR, hostname)
 
 
 def acquire_lock():
@@ -187,7 +197,7 @@ try:
     dat += "$duusers['%s'] = array(%s);\n" % (hostname, ", ".join(parts))
     dat += "?>"
 
-    final = "%s/%s.%s" % (DIR, hostname, EXT)
+    final = "%s/%s.%s" % (OUT_DIR, hostname, EXT)
     tmp = "%s.tmp.%d" % (final, os.getpid())
     with open(tmp, "w") as f:
         f.write(dat)

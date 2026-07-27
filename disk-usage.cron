@@ -1,0 +1,11 @@
+# /etc/cron.d/disk-usage — root-visibility per-user disk usage for the
+# simple-top-viewer page. Installed (with @PUBLISH_USER@ filled in) by
+# install-disk-usage; edit the copy in the web directory, not this file.
+# The root collector gets an overnight window; the script itself further
+# gates on staleness and load, so most firings are no-ops. The publisher
+# runs unprivileged every 10 minutes and copies only when there is a newer
+# scan.
+SHELL=/bin/bash
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+7 1-6 * * * root /root/bin/update-disk-usage 2>&1 | logger -t disk-usage
+*/10 * * * * @PUBLISH_USER@ /usr/local/bin/publish-disk-usage 2>&1 | logger -t disk-usage

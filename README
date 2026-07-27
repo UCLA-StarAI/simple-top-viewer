@@ -28,4 +28,29 @@ public repository. Copy config.example.php to config.local.php and edit it;
 without one, index.php falls back to generic defaults. stats.py needs no
 configuration: it writes its .dat file next to itself.
 
+Accurate per-user disk usage (optional, needs root)
+---------------------------------------------------
+stats.py opportunistically triggers diskusage.py to chart per-user usage of
+local data disks. Run as a regular user it cannot descend into other users'
+unreadable directories, so part of each disk shows up unattributed. The
+optional root-side pipeline fixes that, without ever letting root write to a
+user-controlled path:
+
+* install-disk-usage (run as root on each machine, or on all of them at once
+  with ./deploy-disk-usage machine1 machine2 ...) installs root-owned copies
+  of diskusage.py and the update-disk-usage wrapper into /root/bin.
+* a root cron job (overnight window, further gated so it only scans when the
+  cached result is stale AND the machine is near-idle) runs the scan with
+  full visibility and writes <machine>.du to a root-owned LOCAL directory,
+  /var/lib/disk-usage. Root never writes into the shared web directory, so
+  nobody can redirect the root job's output with a planted symlink.
+* an unprivileged cron job copies the .du into the web directory whenever a
+  newer scan exists — atomically, timestamps preserved. If the root pipeline
+  ever breaks, the published file simply ages out and stats.py's user-level
+  fallback scan takes over again.
+
+Nothing in the pipeline is site-specific: at install time the installer
+derives the web directory (the one it sits in) and the publishing user (that
+directory's owner) and substitutes them into the installed copies.
+
 Improvements and patches welcome.

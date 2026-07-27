@@ -1,0 +1,48 @@
+#!/bin/bash
+# update-disk-usage — root-side wrapper around diskusage.py. Runs the per-user
+# disk scan with root visibility (so nothing hides in unreadable directories)
+# and writes <host>.du into a root-owned LOCAL drop directory. The
+# unprivileged publish-disk-usage copies it from there into the shared web
+# directory; root never writes anywhere a user can influence.
+#
+# Cron fires this hourly during the overnight window, but the heavy du sweep
+# only happens when the previous file is older than MAX_AGE_HOURS and the
+# machine is close to idle — the same opportunistic scheme stats.py uses for
+# its user-level scan. Pass --force to bypass both gates.
+#
+# Installed by install-disk-usage to /root/bin/update-disk-usage (0700),
+# next to the root-owned copy of diskusage.py. Every component of these
+# paths must stay root-owned and not group/world-writable.
+
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+OUT_DIR="/var/lib/disk-usage"    # local disk (never NFS), root-owned 0755
+MAX_AGE_HOURS=20                 # rescan only when the last .du is older than this
+MAX_LOAD=2.0                     # ...and 1-min load is below this (matches stats.py)
+DU_SCRIPT="/root/bin/diskusage.py"
+
+host=$(hostname -s | tr '[:upper:]' '[:lower:]')
+
+# Root writing into a directory someone else can write to would be a symlink
+# attack surface — refuse unless the drop dir is root's alone.
+install -d -o root -g root -m 0755 "$OUT_DIR"
+if [[ -n $(find "$OUT_DIR" -maxdepth 0 \( ! -user root -o -perm /022 \) -print) ]]; then
+    echo "refusing: $OUT_DIR must be owned by root and not group/world-writable" >&2
+    exit 1
+fi
+
+force=0
+[[ ${1:-} == --force ]] && force=1
+if (( ! force )); then
+    if [[ -e "$OUT_DIR/$host.du" ]]; then
+        age=$(( $(date +%s) - $(stat -c %Y "$OUT_DIR/$host.du") ))
+        (( age < MAX_AGE_HOURS * 3600 )) && exit 0
+    fi
+    load=$(awk '{print $1}' /proc/loadavg)
+    awk -v l="$load" -v max="$MAX_LOAD" 'BEGIN{exit !(l < max)}' || exit 0
+fi
+
+# diskusage.py handles niceness, locking, timeouts, and atomic replace itself.
+TOP_DU_DIR="$OUT_DIR" exec "$DU_SCRIPT"
