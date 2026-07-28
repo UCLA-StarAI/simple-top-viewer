@@ -59,8 +59,12 @@ EXT = "du"
 DU_ROOTS = ['/scratch', '/scratch2', '/scratch3', '/space', '/data', '/local']
 TOP_N = 25            # keep the biggest N users per filesystem
 MIN_GB = 5.0          # ignore users below this many GB
-DU_TIMEOUT = 5400     # seconds, hard cap per filesystem (90 min)
-LOCK_STALE = 4 * 3600 # a lock older than this is treated as a crashed run
+DU_TIMEOUT = 4 * 3600  # seconds, hard cap per filesystem — a multi-TB mount
+                       # on a busy machine can legitimately need hours at
+                       # idle I/O priority; timing out drops the whole mount
+LOCK_STALE = 16 * 3600 # a lock older than this is treated as a crashed run;
+                       # must comfortably exceed a worst-case full scan so a
+                       # slow-but-alive run never has its lock stolen
 NET_FS = set(['nfs', 'nfs4', 'cifs', 'smbfs', 'smb3', 'fuse.sshfs', 'lustre',
               'gpfs', 'ceph', 'glusterfs', 'afs', '9p', 'fuse.glusterfs', 'beegfs'])
 PSEUDO_FS = set(['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'proc', 'sysfs',
