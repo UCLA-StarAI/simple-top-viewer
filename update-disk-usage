@@ -19,8 +19,15 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 022
 
 OUT_DIR="/var/lib/disk-usage"    # local disk (never NFS), root-owned 0755
-MAX_AGE_HOURS=20                 # rescan only when the last .du is older than this
-MAX_LOAD=2.0                     # ...and 1-min load is below this (matches stats.py)
+MAX_AGE_HOURS=12                 # rescan only when the last .du is older than this.
+                                 # Must be comfortably less than the gap between a
+                                 # late-finishing scan (a long sweep started in the
+                                 # 1-6am window can end mid-morning) and 1am the next
+                                 # night, or that whole night gets skipped on age.
+MAX_LOAD=4.0                     # ...and 1-min load is below this (matches stats.py).
+                                 # These are many-core GPU hosts: load 3-4 usually
+                                 # means a couple of busy cores, not a busy machine,
+                                 # and 2.0 kept busy hosts from ever scanning.
 DU_SCRIPT="/root/bin/diskusage.py"
 
 host=$(hostname -s | tr '[:upper:]' '[:lower:]')

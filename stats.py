@@ -29,7 +29,9 @@ DISK_CANDIDATES = ['/', '/tmp', '/scratch', '/scratch2', '/space', '/data', '/lo
 # day old AND the machine is not busy, so a fresh machine populates right away and
 # a busy one simply waits for a quiet tick. No fixed schedule, never during load.
 DU_MIN_AGE = 24 * 3600   # rescan only if the cached .du is missing or older than this
-DU_MAX_LOAD = 2.0        # skip unless the 1-min load average is below this (absolute)
+DU_MAX_LOAD = 4.0        # skip unless the 1-min load average is below this (absolute).
+                         # On many-core GPU hosts load 3-4 is a couple of busy cores,
+                         # not a busy machine; 2.0 starved busy hosts of scans for days.
 
 this_user = getpass.getuser()
 this_script = os.path.abspath(__file__)
