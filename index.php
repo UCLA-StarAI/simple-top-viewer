@@ -96,7 +96,7 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
   .h2row h2{margin:0}
   #uf{padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;width:210px;max-width:55vw}
   .dim{opacity:.28} .hit{background:color-mix(in srgb,var(--accent) 12%,transparent)}
-  .warnrow{color:var(--warn)} .critrow{color:var(--crit);font-weight:650}
+  .okrow{color:var(--good)} .warnrow{color:var(--warn)} .critrow{color:var(--crit);font-weight:650}
   .foot{color:var(--muted);font-size:12px;margin:24px 0 8px;text-align:center}
   .bar.mini{height:8px;min-width:50px}
   .mrow{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11px}
@@ -437,7 +437,9 @@ if (count($tu_cpu)){
     print('</tbody></table></div>');
 }
 
-// ---------------- disk pressure (with per-user breakdown) ----------------
+// ---------------- disk usage (with per-user breakdown) ----------------
+// Shown: every disk with a per-user measurement, plus any disk over the warn
+// threshold. Thresholds only control the colour of the "% full" label.
 $UCOLORS = array('#4f8cff','#f2994a','#27ae60','#eb5757','#9b51e0','#17becf',
                  '#e0a000','#e056a0','#00b8a3','#c0563b','#7d8ca3','#b07cd6',
                  '#8c6d31','#6c7ae0');
@@ -445,7 +447,8 @@ $disk_rows = array();
 foreach ($responding as $host){
     if (empty($disk[$host])) continue;
     foreach ($disk[$host] as $mount=>$info){
-        if ($info[0] >= $DISK_WARN) $disk_rows[] = array($host,$mount,$info);
+        if ($info[0] >= $DISK_WARN || !empty($duusers[$host][$mount]))
+            $disk_rows[] = array($host,$mount,$info);
     }
 }
 if (count($disk_rows)){
@@ -463,11 +466,11 @@ if (count($disk_rows)){
     arsort($utotal);
     $ucolor_map = array(); $rk = 0;
     foreach ($utotal as $u=>$t){ $ucolor_map[$u] = $UCOLORS[$rk % count($UCOLORS)]; $rk++; }
-    print('<h2>Disk pressure <span class="muted" style="font-weight:400;font-size:.7em">bar shows which users fill each disk</span></h2>');
+    print('<h2>Disk usage <span class="muted" style="font-weight:400;font-size:.7em">bar shows which users fill each disk</span></h2>');
     foreach ($disk_rows as $r){
         list($host,$mount,$info) = $r;
         list($pct,$used_gb,$total_gb) = $info;
-        $cls = $pct >= $DISK_CRIT ? 'critrow' : 'warnrow';
+        $cls = $pct >= $DISK_CRIT ? 'critrow' : ($pct >= $DISK_WARN ? 'warnrow' : 'okrow');
         printf('<div class="card pad" style="margin-bottom:10px"><div class="dhead">'.
                '<div><a href="#%s" class="host">%s</a> <span class="mono">%s</span> &middot; <span class="%s">%s%% full</span></div>'.
                '<div class="mono muted">%s / %s</div></div>',
