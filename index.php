@@ -105,6 +105,10 @@ $STALE = 590; // seconds without an update before a machine is "unavailable"
   .mrow .v{width:60px;text-align:right;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   .chip{display:inline-flex;align-items:baseline;gap:5px;background:var(--chip);border-radius:20px;padding:1px 9px;font-size:11px;margin:0 5px 4px 0}
   .dhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  summary.dhead{cursor:pointer;list-style:none}
+  summary.dhead::-webkit-details-marker{display:none}
+  summary.dhead > span:first-child::before{content:'▸';margin-right:7px;color:var(--muted);font-size:.8em}
+  details[open] > summary.dhead > span:first-child::before{content:'▾'}
   .stack{display:flex;height:22px;border-radius:8px;overflow:hidden;margin-top:10px;
     background:color-mix(in srgb,var(--good) 22%,transparent)}
   .stack > span{height:100%;transition:width .3s}
@@ -471,10 +475,16 @@ if (count($disk_rows)){
         list($host,$mount,$info) = $r;
         list($pct,$used_gb,$total_gb) = $info;
         $cls = $pct >= $DISK_CRIT ? 'critrow' : ($pct >= $DISK_WARN ? 'warnrow' : 'okrow');
-        printf('<div class="card pad" style="margin-bottom:10px"><div class="dhead">'.
-               '<div><a href="#%s" class="host">%s</a> <span class="mono">%s</span> &middot; <span class="%s">%s%% full</span></div>'.
-               '<div class="mono muted">%s / %s</div></div>',
-               h($host), h($host), h($mount), $cls, round($pct), fmt_gb($used_gb), fmt_gb($total_gb));
+        $head = sprintf('<span><a href="#%s" class="host">%s</a> <span class="mono">%s</span> &middot; <span class="%s">%s%% full</span></span>'.
+                        '<span class="mono muted">%s / %s</span>',
+                        h($host), h($host), h($mount), $cls, round($pct), fmt_gb($used_gb), fmt_gb($total_gb));
+        // disks under the warn threshold collapse to their header line;
+        // click to expand the per-user breakdown
+        $collapsed = $pct < $DISK_WARN;
+        if ($collapsed)
+            printf('<div class="card pad" style="margin-bottom:10px"><details><summary class="dhead">%s</summary>', $head);
+        else
+            printf('<div class="card pad" style="margin-bottom:10px"><div class="dhead">%s</div>', $head);
 
         $users = isset($duusers[$host][$mount]) ? $duusers[$host][$mount] : array();
         if ($users && $total_gb > 0){
@@ -505,6 +515,7 @@ if (count($disk_rows)){
             // no per-user data for this filesystem (e.g. a shared/NFS mount)
             printf('<div style="margin-top:6px;max-width:300px">%s</div>', bar($pct/100, round($pct).'% full'));
         }
+        if ($collapsed) print('</details>');
         print('</div>');
     }
 }
