@@ -15,6 +15,13 @@ import time
 import csv
 
 NUMPROCS = 100
+# A process is listed only if it clears one of these. MIN_CPU is percent of a
+# single core (ps pcpu, a lifetime average), MIN_MEM is percent of total RAM.
+# The CPU bar was 3, which let long-lived monitors (nvtop sits around 3%) fill
+# the per-machine user lists on otherwise idle hosts. The memory escape hatch
+# keeps a big-RAM job visible even when it is blocked on I/O and using no CPU.
+MIN_CPU = 5.0
+MIN_MEM = 3.0
 DIR = os.path.dirname(os.path.abspath(__file__))  # shared web directory
 EXT = "dat"
 HIST_EXT = "hist"
@@ -104,8 +111,8 @@ for proc in procs_raw:
     if len(d) < 6:
         continue
 
-    # skip idle (<=3% cpu and <=3% mem), the header, cron, this script, etc.
-    if (d[2] != '%CPU' and float(d[2]) <= 3 and float(d[3]) <= 3) or \
+    # skip idle (under both MIN_CPU and MIN_MEM), the header, cron, this script, etc.
+    if (d[2] != '%CPU' and float(d[2]) < MIN_CPU and float(d[3]) < MIN_MEM) or \
        (d[0] == 'root' and d[5] in ('/USR/SBIN/CRON', 'CRON')) or \
        d[5] in ('/sbin/plymouthd', '/usr/sbin/unity-greeter') or \
        (d[0] == this_user and d[5] in ('crond', '[head]')) or \
